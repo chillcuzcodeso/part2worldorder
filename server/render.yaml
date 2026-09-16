@@ -9,3 +9,5 @@ services:
     envVars:
       - key: UPLOAD_DIR
         value: /tmp/received_uploads
+      - key: ADMIN_TOKEN
+        generateValue: true

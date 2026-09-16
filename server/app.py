@@ -7,12 +7,13 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, request
+from flask import Flask, abort, request, send_from_directory
 
 app = Flask(__name__)
 
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "received_uploads"))
 UPLOAD_DIR.mkdir(exist_ok=True)
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "changeme")
 
 
 @app.get("/")
@@ -71,6 +72,41 @@ def _append_log(entry: dict) -> None:
     log_path = UPLOAD_DIR / "events.jsonl"
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def _require_admin() -> None:
+    token = request.headers.get("X-Admin-Token") or request.args.get("token")
+    if token != ADMIN_TOKEN:
+        abort(401, "Unauthorized")
+
+
+@app.get("/v1/uploads")
+def list_uploads():
+    """List uploaded ZIP files. Pass ?token=YOUR_TOKEN or header X-Admin-Token."""
+    _require_admin()
+    files = []
+    for path in sorted(UPLOAD_DIR.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True):
+        stat = path.stat()
+        files.append(
+            {
+                "name": path.name,
+                "bytes": stat.st_size,
+                "download_url": f"/v1/uploads/{path.name}",
+            }
+        )
+    return {"files": files}, 200
+
+
+@app.get("/v1/uploads/<path:filename>")
+def download_upload(filename: str):
+    """Download one uploaded ZIP. Pass ?token=YOUR_TOKEN or header X-Admin-Token."""
+    _require_admin()
+    if not filename.endswith(".zip") or ".." in filename or "/" in filename or "\\" in filename:
+        abort(400, "Invalid filename")
+    target = UPLOAD_DIR / filename
+    if not target.is_file():
+        abort(404, "Not found")
+    return send_from_directory(UPLOAD_DIR, filename, as_attachment=True)
 
 
 if __name__ == "__main__":
